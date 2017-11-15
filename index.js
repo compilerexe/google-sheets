@@ -5,21 +5,55 @@ var googleAuth = require('google-auth-library')
 var axios = require('axios')
 var moment = require('moment-timezone').tz('Asia/Bangkok')
 
-var SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
+var SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 var TOKEN_DIR = (process.env.HOME || process.env.HOMEPATH ||
   process.env.USERPROFILE) + '/.credentials/'
 var TOKEN_PATH = TOKEN_DIR + 'sheets.googleapis.com-nodejs-quickstart.json'
 
 const CLIENT_SECRET_FILE = process.env.CLIENT_SECRET_FILE || 'client_secret.json'
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID || '11lSStysPa2WyFUiEhinJyDkDIoWlrPw6NHYjROKz6jY'
+const sheetName = 'v2'
 
-fs.readFile(CLIENT_SECRET_FILE, function processClientSecrets (err, content) {
-  if (err) {
-    console.log('Error loading client secret file: ' + err)
-    return
-  }
-  authorize(JSON.parse(content), listMajors)
-})
+function updateNetpie () {
+  console.log('sync time to netpie...')
+  fs.readFile(CLIENT_SECRET_FILE, function processClientSecrets (err, content) {
+    if (err) {
+      console.log('Error loading client secret file: ' + err)
+      return
+    }
+    authorize(JSON.parse(content), listMajors)
+  })
+}
+
+function writeSpreadSheet (body) {
+
+  console.log('sync time to netpie...')
+  fs.readFile(CLIENT_SECRET_FILE, function processClientSecrets (err, content) {
+    if (err) {
+      console.log('Error loading client secret file: ' + err)
+      return
+    }
+    authorize(JSON.parse(content), function (auth) {
+
+      var sheets = google.sheets('v4')
+      sheets.spreadsheets.values.batchUpdate({
+        auth: auth,
+        spreadsheetId: SPREADSHEET_ID,
+        resource: body
+      }, function (err, response) {
+        if (err) {
+          console.error(err)
+          return
+        }
+
+        // TODO: Change code below to process the `response` object:
+        console.log(JSON.stringify(response, null, 2))
+      })
+
+    })
+  })
+
+}
 
 function authorize (credentials, callback) {
   var clientSecret = credentials.web.client_secret
@@ -32,7 +66,8 @@ function authorize (credentials, callback) {
   fs.readFile(TOKEN_PATH, function (err, token) {
     if (err) {
       getNewToken(oauth2Client, callback)
-    } else {
+    }
+    else {
       oauth2Client.credentials = JSON.parse(token)
       callback(oauth2Client)
     }
@@ -76,7 +111,7 @@ function storeToken (token) {
 }
 
 function listMajors (auth) {
-  const sheetName = 'v2'
+
   var sheets = google.sheets('v4')
   sheets.spreadsheets.values.get({
     auth: auth,
@@ -92,22 +127,38 @@ function listMajors (auth) {
       console.log('No data found.')
     } else {
       let header = rows[0]
+      console.log(header)
       const mapped = rows.slice(1).map((row) => {
         let retObj = {}
         header.forEach((item, k) => retObj[header[k]] = row[k])
         return retObj
       })
 
-      mapped.forEach(deviceConfig => {
-        axios.put(deviceConfig.target, deviceConfig['updateTime(minute)']).then(function (response) {
-          console.log(`${moment.format()} - ${deviceConfig.name} VALUE: ${deviceConfig['updateTime(minute)']} STATUS: ${response.statusText}`)
+      var reqs = mapped.map((deviceConfig, idx) => {
+        return axios.put(deviceConfig.target, deviceConfig['updateTime(minute)']).then(function (response) {
+          console.log(`${idx} ${moment.format()} - ${deviceConfig.name} VALUE: ${deviceConfig['updateTime(minute)']} STATUS: ${response.statusText}`)
+          return {
+            range: `${sheetName}!F${idx + 2}`,
+            values: [[moment.format()]]
+          }
         })
           .catch(function (error) {
             console.log(error)
           })
       })
 
+      Promise.all(reqs).then(function (results) {
+        var beWrittenData = results.filter(value => !!value)
+        writeSpreadSheet({
+          data: beWrittenData,
+          valueInputOption: 'RAW'
+        })
+        console.log(beWrittenData)
+      })
+
     }
   })
 
 }
+
+updateNetpie()
